@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MiniMart POS — Punto de Venta</title>
+  <link rel="stylesheet" href="css/styles.css"/>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo-icon">PV</div>
+  <div class="logo-text">
+    <h1>MiniMart POS</h1>
+    <span>Sistema Punto de Venta</span>
+  </div>
+  <div class="header-info">
+    <span id="fecha-actual"></span>
+    <span class="ventas-badge">Ventas registradas: <strong id="total-ventas-badge">0</strong></span>
+  </div>
+</header>
+
+<div class="wrapper">
+  <div class="pos-grid">
+
+    <!-- COLUMNA IZQUIERDA: Catálogo de productos -->
+    <div class="panel">
+      <div class="panel-title">Catalogo de Productos</div>
+
+      <input type="text" id="buscar-producto" class="input-buscar"
+             placeholder="Buscar producto..." oninput="filtrarProductos()"/>
+
+      <div class="categoria-tabs" id="categoria-tabs"></div>
+      <div class="producto-lista" id="producto-lista"></div>
+    </div>
+
+    <!-- COLUMNA CENTRAL: Ticket actual -->
+    <div class="panel panel-ticket">
+      <div class="panel-title">Ticket Actual
+        <span id="ticket-num" class="ticket-num"></span>
+      </div>
+
+      <!-- Selector de cliente -->
+      <div class="field-group">
+        <label class="field-label">Cliente</label>
+        <select id="select-cliente" class="input-field">
+          <option value="">-- Seleccionar cliente --</option>
+        </select>
+      </div>
+
+      <!-- Selector de fecha -->
+      <div class="field-group">
+        <label class="field-label">Fecha de venta</label>
+        <input type="date" id="fecha-venta" class="input-field"/>
+      </div>
+
+      <!-- Items del ticket -->
+      <div class="ticket-items" id="ticket-items">
+        <div class="ticket-empty">Agrega productos desde el catálogo</div>
+      </div>
+
+      <!-- Totales -->
+      <div class="ticket-totales">
+        <div class="total-row">
+          <span>Subtotal</span>
+          <span id="subtotal">$0.00</span>
+        </div>
+        <div class="total-row total-final">
+          <span>TOTAL</span>
+          <span id="total-final">$0.00</span>
+        </div>
+      </div>
+
+      <!-- Botones de acción -->
+      <div class="ticket-acciones">
+        <button class="btn-cancelar" onclick="cancelarTicket()">Cancelar</button>
+        <button class="btn-registrar" onclick="registrarVenta()">Registrar Venta</button>
+      </div>
+    </div>
+
+    <!-- COLUMNA DERECHA: Historial -->
+    <div class="panel">
+      <div class="panel-title">Ventas Registradas</div>
+
+      <div class="historial-stats">
+        <div class="stat-item">
+          <div class="stat-val" id="stat-tickets">0</div>
+          <div class="stat-lbl">Tickets</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val" id="stat-productos">0</div>
+          <div class="stat-lbl">Lineas</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val" id="stat-total">$0</div>
+          <div class="stat-lbl">Total</div>
+        </div>
+      </div>
+
+      <div class="historial-lista" id="historial-lista">
+        <div class="ticket-empty">Sin ventas registradas</div>
+      </div>
+
+
+    </div>
+
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- MODAL de cantidad/descuento -->
+<div class="modal-overlay" id="modal" onclick="cerrarModal(event)">
+  <div class="modal">
+    <div class="modal-title" id="modal-producto-nombre"></div>
+    <div class="modal-precio" id="modal-producto-precio"></div>
+    <div class="field-group">
+      <label class="field-label">Cantidad</label>
+      <input type="number" id="modal-cantidad" class="input-field" min="1" max="99" value="1"/>
+    </div>
+    <div class="field-group">
+      <label class="field-label">Descuento (%)</label>
+      <select id="modal-descuento" class="input-field">
+        <option value="0">Sin descuento</option>
+        <option value="5">5%</option>
+        <option value="10">10%</option>
+        <option value="15">15%</option>
+        <option value="20">20%</option>
+      </select>
+    </div>
+    <div class="modal-total-preview" id="modal-total-preview"></div>
+    <div class="modal-acciones">
+      <button class="btn-cancelar" onclick="cerrarModal()">Cancelar</button>
+      <button class="btn-registrar" onclick="agregarAlTicket()">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/pos.js"></script>
+</body>
+</html>
