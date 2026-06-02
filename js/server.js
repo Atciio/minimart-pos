@@ -56,22 +56,34 @@ async function cargarTicketsCache() {
     const [rows] = await pool.query(`
       SELECT
         hv.ticket_id,
-        dt.fecha,
+        MAX(dt.fecha)             AS fecha,
         dc.cliente_nombre,
         dc.cliente_localizacion,
-        COUNT(hv.producto_id)   AS productos,
-        SUM(hv.total_venta)     AS total
+        COUNT(hv.producto_id)     AS productos,
+        SUM(hv.total_venta)       AS total
       FROM hechos_ventas hv
-      JOIN dim_tiempo  dt ON hv.tiempo_id  = dt.tiempo_id
-      JOIN dim_cliente dc ON hv.cliente_id = dc.cliente_id
-      GROUP BY hv.ticket_id, dt.fecha, dc.cliente_nombre, dc.cliente_localizacion
+      LEFT JOIN dim_tiempo  dt ON hv.tiempo_id  = dt.tiempo_id
+      LEFT JOIN dim_cliente dc ON hv.cliente_id = dc.cliente_id
+      GROUP BY hv.ticket_id, dc.cliente_nombre, dc.cliente_localizacion
       ORDER BY hv.ticket_id DESC
     `);
     TICKETS_CACHE = rows;
-    console.log(`Caché de tickets listo: ${TICKETS_CACHE.length} tickets`);
+    console.log(`Caché listo: ${TICKETS_CACHE.length} tickets`);
   } catch (err) {
     console.error('Error cargando caché:', err.message);
   }
+}
+
+// ── AGREGAR TICKET AL CACHÉ EN MEMORIA ───────────────────────────────────────
+function agregarTicketCache(ticket_id, fecha, cliente, productos, total) {
+  TICKETS_CACHE.unshift({
+    ticket_id,
+    fecha,
+    cliente_nombre: cliente.cliente_nombre,
+    cliente_localizacion: cliente.cliente_localizacion,
+    productos,
+    total
+  });
 }
 
 // ── HELPER: obtener o crear entrada en dim_tiempo ─────────────────────────────
@@ -136,7 +148,7 @@ app.get('/api/productos-completo', (req, res) => res.json(PRODUCTOS));
 // Recibe: { cliente_id, fecha, items: [{ producto_id, cantidad, descuento_pct }] }
 // Inserta en dim_tiempo (si no existe) y en hechos_ventas
 app.post('/api/venta', async (req, res) => {
-  const { cliente_id, fecha, items } = req.body;
+  const { cliente_id, fecha, items, ticket_id_manual } = req.body;
 
   if (!cliente_id || !fecha || !items || items.length === 0)
     return res.status(400).json({ error: 'Datos incompletos' });
@@ -148,9 +160,23 @@ app.post('/api/venta', async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Obtener o crear el tiempo_id para la fecha de la venta
-    const tiempo_id  = await obtenerTiempoId(fecha);
-    const ticket_id  = await siguienteTicketId();
+    const tiempo_id = await obtenerTiempoId(fecha);
+    
+    // Usar ticket_id manual si se proporcionó, si no generar automático
+    const ticket_id = ticket_id_manual ? Number(ticket_id_manual) : await siguienteTicketId();
+
+    // Verificar que el ticket_id no exista ya
+    if (ticket_id_manual) {
+      const [existe] = await conn.query(
+        'SELECT ticket_id FROM hechos_ventas WHERE ticket_id = ? LIMIT 1', [ticket_id]
+      );
+      if (existe.length > 0) {
+        await conn.rollback();
+        conn.release();
+        return res.status(409).json({ error: `El ticket #${ticket_id} ya existe. Usa otro número.` });
+      }
+    }
+
     let filasInsertadas = 0;
 
     for (const item of items) {
@@ -172,6 +198,18 @@ app.post('/api/venta', async (req, res) => {
     }
 
     await conn.commit();
+
+    // Actualizar caché en memoria sin recargar toda la BD
+    agregarTicketCache(ticket_id, fecha, cliente, filasInsertadas,
+      items.reduce((sum, item) => {
+        const p = PRODUCTOS.find(p => p.producto_id == item.producto_id);
+        if (!p) return sum;
+        const cant = Number(item.cantidad) || 1;
+        const desc = Number(item.descuento_pct) || 0;
+        return sum + p.producto_precio * cant * (1 - desc / 100);
+      }, 0)
+    );
+
     res.json({ ok: true, ticket_id, filas: filasInsertadas });
 
   } catch (err) {
@@ -183,8 +221,16 @@ app.post('/api/venta', async (req, res) => {
   }
 });
 
-// ── 4. HISTORIAL DE VENTAS RECIENTES ─────────────────────────────────────────
-// Devuelve tickets desde caché en memoria (muy rápido)
+// ── 4. BÚSQUEDA DE TICKET EN MEMORIA ─────────────────────────────────────────
+app.get('/api/buscar-ticket/:ticket_id', (req, res) => {
+  const ticketId = Number(req.params.ticket_id);
+  if (!ticketId) return res.json([]);
+  const resultado = TICKETS_CACHE.filter(t => t.ticket_id === ticketId);
+  res.json(resultado);
+});
+
+// ── 5. HISTORIAL DE VENTAS (CACHÉ - OPCIONAL) ─────────────────────────────────
+// Devuelve resumen desde caché en memoria
 app.get('/api/historial', (req, res) => {
   res.json(TICKETS_CACHE);
 });

@@ -46,6 +46,13 @@
         <span id="ticket-num" class="ticket-num"></span>
       </div>
 
+      <!-- Número de ticket manual -->
+      <div class="field-group">
+        <label class="field-label">Número de Ticket</label>
+        <input type="number" id="ticket-id-manual" class="input-field" 
+               placeholder="Automático (dejar vacío)" min="1"/>
+      </div>
+
       <!-- Selector de cliente -->
       <div class="field-group">
         <label class="field-label">Cliente</label>
@@ -97,7 +104,10 @@
 
       <div style="display: flex; gap: 10px; margin-bottom: 12px;">
         <input type="text" id="buscar-ticket" class="input-buscar"
-               placeholder="Buscar por ticket..." oninput="aplicarFiltros()" style="flex: 1;"/>
+               placeholder="Número de ticket..." 
+               onkeydown="if(event.key==='Enter') buscarTicket(this.value)"
+               style="flex: 1;"/>
+        <button class="btn-exportar" onclick="buscarTicket(document.getElementById('buscar-ticket').value)" style="padding: 9px 16px; white-space: nowrap;">🔍 Buscar</button>
         <button class="btn-exportar" onclick="imprimirTickets()" style="padding: 9px 16px; white-space: nowrap;">🖨️ Imprimir</button>
       </div>
 

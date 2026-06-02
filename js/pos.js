@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('fecha-venta').value = hoy.toISOString().slice(0, 10);
 
   await Promise.all([cargarClientes(), cargarProductos()]);
-  await cargarHistorial();
+  cargarKPIs(); // Solo KPIs, no historial
 
   document.getElementById('modal-cantidad').addEventListener('input', actualizarPreviewModal);
   document.getElementById('modal-descuento').addEventListener('change', actualizarPreviewModal);
@@ -183,8 +183,9 @@ function cancelarTicket() { ticketItems = []; renderTicket(); }
 
 // ── REGISTRAR VENTA EN MARIADB ────────────────────────────────────────────────
 async function registrarVenta() {
-  const cliente_id = document.getElementById('select-cliente').value;
-  const fecha      = document.getElementById('fecha-venta').value;
+  const cliente_id      = document.getElementById('select-cliente').value;
+  const fecha           = document.getElementById('fecha-venta').value;
+  const ticket_id_manual = document.getElementById('ticket-id-manual').value;
 
   if (!cliente_id)           { showToast('Selecciona un cliente', true); return; }
   if (!fecha)                { showToast('Selecciona la fecha', true); return; }
@@ -194,15 +195,16 @@ async function registrarVenta() {
     const res  = await fetch('/api/venta', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ cliente_id, fecha, items: ticketItems }),
+      body:    JSON.stringify({ cliente_id, fecha, items: ticketItems, ticket_id_manual: ticket_id_manual || null }),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error);
 
     ticketItems = [];
     renderTicket();
-    await cargarHistorial();
-    showToast(`Venta #${data.ticket_id} registrada en MariaDB`);
+    document.getElementById('ticket-id-manual').value = '';
+    cargarKPIs();
+    showToast(`Venta #${data.ticket_id} registrada`);
 
   } catch (e) {
     showToast('Error: ' + e.message, true);
@@ -210,6 +212,71 @@ async function registrarVenta() {
 }
 
 // ── HISTORIAL DESDE MARIADB ───────────────────────────────────────────────────
+async function cargarKPIs() {
+  try {
+    const kpiRes = await fetch('/api/kpis-sesion').then(r => r.json());
+
+    // KPIs
+    document.getElementById('stat-tickets').textContent   = kpiRes.tickets  || 0;
+    document.getElementById('stat-productos').textContent = kpiRes.lineas   || 0;
+    document.getElementById('stat-total').textContent     = '$' + fmt(kpiRes.total || 0, 0);
+    document.getElementById('total-ventas-badge').textContent = kpiRes.tickets || 0;
+    
+    // Mostrar mensaje inicial
+    document.getElementById('historial-lista').innerHTML = 
+      '<p style="text-align:center; color:#999; padding:20px;">Busca un ticket por número para ver detalles</p>';
+
+  } catch (e) {
+    console.error('Error cargando KPIs:', e);
+  }
+}
+
+// ── BÚSQUEDA RÁPIDA DE TICKET ─────────────────────────────────────────────────
+async function buscarTicket(ticketId) {
+  if (!ticketId || ticketId.trim() === '') {
+    document.getElementById('historial-lista').innerHTML = 
+      '<p style="text-align:center; color:#999; padding:20px;">Busca un ticket por número para ver detalles</p>';
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/buscar-ticket/${ticketId}`).then(r => r.json());
+    
+    if (!res || res.length === 0) {
+      document.getElementById('historial-lista').innerHTML = 
+        '<p style="text-align:center; color:#f66; padding:20px;">Ticket no encontrado</p>';
+      return;
+    }
+
+    const t = res[0];
+    const fecha = t.fecha ? new Date(t.fecha).toLocaleDateString('es-MX') : '—';
+
+    const html = `
+      <div class="ticket-card" style="border: 2px solid #00a651; border-radius: 10px; padding: 16px; margin: 10px 0;">
+        <div style="margin-bottom: 8px;">
+          <strong style="font-size: 1.1em;">Ticket #${t.ticket_id}</strong>
+          <span style="float:right; color:#aaa; font-size:.85em;">${fecha}</span>
+        </div>
+        <div style="color:#ccc; margin-bottom: 12px;">
+          ${t.cliente_nombre || '—'} · ${t.cliente_localizacion || '—'}
+        </div>
+        <hr style="border-color:#333; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; font-size: .9em;">
+          <span>📦 Productos registrados</span>
+          <strong>${t.productos}</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 10px;">
+          <span style="font-size: 1em;">TOTAL</span>
+          <strong style="font-size: 1.2em; color:#ffd200;">$${fmt(t.total, 2)}</strong>
+        </div>
+      </div>`;
+
+    document.getElementById('historial-lista').innerHTML = html;
+  } catch (e) {
+    console.error('Error buscando ticket:', e);
+  }
+}
+
 async function cargarHistorial() {
   try {
     const [histRes, kpiRes] = await Promise.all([
@@ -339,131 +406,43 @@ function filtrarHistorial() {
 
 // ── IMPRIMIR TICKETS VISIBLES ──────────────────────────────────────────────────
 function imprimirTickets() {
-  // Obtener tickets actualmente visibles
-  const items = document.querySelectorAll('.historial-item');
+  const ticketCard = document.querySelector('#historial-lista .ticket-card');
   
-  if (items.length === 0) {
-    showToast('No hay tickets para imprimir', true);
+  if (!ticketCard) {
+    showToast('Busca un ticket primero para imprimir', true);
     return;
   }
 
-  // Crear ventana de impresión
-  const printWindow = window.open('', '', 'width=800,height=600');
-  
-  let html = `
+  const contenido = ticketCard.innerHTML;
+  const printWindow = window.open('', '', 'width=600,height=500');
+
+  const html = `
     <!DOCTYPE html>
     <html lang="es">
     <head>
       <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Impresión de Tickets - MiniMart POS</title>
+      <title>Ticket - MiniMart POS</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-          font-family: Arial, sans-serif; 
-          background: #fff; 
-          color: #333;
-          padding: 20px;
-        }
-        .header {
-          text-align: center;
-          border-bottom: 2px solid #333;
-          padding-bottom: 15px;
-          margin-bottom: 20px;
-        }
-        .header h1 {
-          font-size: 24px;
-          margin-bottom: 5px;
-        }
-        .header p {
-          font-size: 12px;
-          color: #666;
-        }
-        .ticket-section {
-          margin-bottom: 20px;
-          page-break-inside: avoid;
-        }
-        .ticket-titulo {
-          background: #f0f0f0;
-          padding: 8px 12px;
-          font-weight: bold;
-          border-left: 4px solid #00a651;
-          margin-bottom: 8px;
-        }
-        .ticket-content {
-          padding: 0 12px;
-          font-size: 12px;
-          line-height: 1.6;
-        }
-        .ticket-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 4px 0;
-          border-bottom: 1px solid #eee;
-        }
-        .ticket-row.total {
-          font-weight: bold;
-          font-size: 13px;
-          border-bottom: 2px solid #333;
-          padding: 8px 0;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 30px;
-          padding-top: 20px;
-          border-top: 1px solid #ccc;
-          font-size: 11px;
-          color: #999;
-        }
-        @media print {
-          body { padding: 0; }
-          .header { border-bottom: 1px solid #000; }
-        }
+        body { font-family: Arial, sans-serif; background: #fff; color: #333; padding: 30px; }
+        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 12px; margin-bottom: 20px; }
+        .header h1 { font-size: 20px; margin-bottom: 4px; }
+        .header p { font-size: 11px; color: #666; }
+        .ticket-card { padding: 10px 0; }
+        hr { border: none; border-top: 1px solid #ccc; margin: 10px 0; }
+        .footer { text-align: center; margin-top: 20px; padding-top: 12px; border-top: 1px dashed #ccc; font-size: 11px; color: #999; }
+        @media print { body { padding: 10px; } }
       </style>
     </head>
     <body>
       <div class="header">
-        <h1>MiniMart POS</h1>
-        <p>Reporte de Tickets - ${new Date().toLocaleString('es-MX')}</p>
+        <h1>MiniMart Express</h1>
+        <p>Sistema Punto de Venta</p>
       </div>
-
-      <div class="content">
-  `;
-
-  // Agregar cada ticket
-  let totalGeneral = 0;
-  items.forEach(item => {
-    const ticket = item.querySelector('.hist-ticket')?.textContent || '';
-    const detalle = item.querySelector('.hist-detalle')?.textContent || '';
-    const total = item.querySelector('.hist-total')?.textContent || '$0.00';
-    
-    // Extraer valor numérico del total
-    const totalNumerico = parseFloat(total.replace(/[^0-9.-]/g, ''));
-    totalGeneral += totalNumerico;
-
-    html += `
-      <div class="ticket-section">
-        <div class="ticket-titulo">${ticket}</div>
-        <div class="ticket-content">
-          <div class="ticket-row">
-            <span>${detalle}</span>
-          </div>
-          <div class="ticket-row total">
-            <span>Total:</span>
-            <span>${total}</span>
-          </div>
-        </div>
-      </div>
-    `;
-  });
-
-  html += `
-      </div>
-      
+      <div class="ticket-card">${contenido}</div>
       <div class="footer">
-        <p><strong>Total General: $${fmt(totalGeneral, 2)}</strong></p>
-        <p>Cantidad de tickets: ${items.length}</p>
         <p>Impreso: ${new Date().toLocaleString('es-MX')}</p>
+        <p>¡Gracias por su compra!</p>
       </div>
     </body>
     </html>
@@ -471,14 +450,8 @@ function imprimirTickets() {
 
   printWindow.document.write(html);
   printWindow.document.close();
-
-  // Esperar a que cargue y luego imprimir
-  setTimeout(() => {
-    printWindow.print();
-    printWindow.close();
-  }, 250);
-
-  showToast(`${items.length} ticket(s) listos para imprimir`);
+  setTimeout(() => { printWindow.print(); printWindow.close(); }, 250);
+  showToast('Imprimiendo ticket...');
 }
 
 // ── UTILIDADES ────────────────────────────────────────────────────────────────
