@@ -16,20 +16,22 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/css', express.static(path.join(__dirname, '..', 'css')));
 app.get('/js/pos.js', (req, res) => res.sendFile(path.join(__dirname, 'pos.js')));
 
-// ── POOL DE CONEXIÓN (persistente para todas las operaciones) ─────────────────
+// ── POOL DE CONEXIÓN ──────────────────────────────────────────────────────────
 const pool = mysql.createPool({
-  host:             process.env.DB_HOST,
-  port:             process.env.DB_PORT,
-  user:             process.env.DB_USER,
-  password:         process.env.DB_PASSWORD,
-  database:         process.env.DB_NAME,
+  host:               process.env.DB_HOST,
+  port:               process.env.DB_PORT,
+  user:               process.env.DB_USER,
+  password:           process.env.DB_PASSWORD,
+  database:           process.env.DB_NAME,
+  ssl: { rejectUnauthorized: false }, // Requerido para Aiven
   waitForConnections: true,
-  connectionLimit:  10,
+  connectionLimit:    10,
 });
 
 // ── CATÁLOGOS EN MEMORIA (solo lectura, se cargan al iniciar) ─────────────────
 let CLIENTES  = [];
 let PRODUCTOS = [];
+let TICKETS_CACHE = []; // Cache de tickets en memoria
 
 async function cargarCatalogos() {
   console.log('Cargando catalogos...');
@@ -45,6 +47,31 @@ async function cargarCatalogos() {
   PRODUCTOS = productos;
 
   console.log(`Listo: ${CLIENTES.length} clientes, ${PRODUCTOS.length} productos`);
+}
+
+// ── CARGAR TICKETS EN MEMORIA ────────────────────────────────────────────────
+async function cargarTicketsCache() {
+  console.log('Cargando tickets en caché...');
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        hv.ticket_id,
+        dt.fecha,
+        dc.cliente_nombre,
+        dc.cliente_localizacion,
+        COUNT(hv.producto_id)   AS productos,
+        SUM(hv.total_venta)     AS total
+      FROM hechos_ventas hv
+      JOIN dim_tiempo  dt ON hv.tiempo_id  = dt.tiempo_id
+      JOIN dim_cliente dc ON hv.cliente_id = dc.cliente_id
+      GROUP BY hv.ticket_id, dt.fecha, dc.cliente_nombre, dc.cliente_localizacion
+      ORDER BY hv.ticket_id DESC
+    `);
+    TICKETS_CACHE = rows;
+    console.log(`Caché de tickets listo: ${TICKETS_CACHE.length} tickets`);
+  } catch (err) {
+    console.error('Error cargando caché:', err.message);
+  }
 }
 
 // ── HELPER: obtener o crear entrada en dim_tiempo ─────────────────────────────
@@ -102,6 +129,9 @@ app.get('/api/clientes', (req, res) => res.json(CLIENTES));
 // ── 2. CATÁLOGO DE PRODUCTOS ──────────────────────────────────────────────────
 app.get('/api/productos', (req, res) => res.json(PRODUCTOS));
 
+// Catalogo completo con IDs (para gestion)
+app.get('/api/productos-completo', (req, res) => res.json(PRODUCTOS));
+
 // ── 3. REGISTRAR VENTA ────────────────────────────────────────────────────────
 // Recibe: { cliente_id, fecha, items: [{ producto_id, cantidad, descuento_pct }] }
 // Inserta en dim_tiempo (si no existe) y en hechos_ventas
@@ -154,28 +184,9 @@ app.post('/api/venta', async (req, res) => {
 });
 
 // ── 4. HISTORIAL DE VENTAS RECIENTES ─────────────────────────────────────────
-// Devuelve los últimos 50 tickets registrados para mostrar en el panel
-app.get('/api/historial', async (req, res) => {
-  try {
-    const [rows] = await pool.query(`
-      SELECT
-        hv.ticket_id,
-        dt.fecha,
-        dc.cliente_nombre,
-        dc.cliente_localizacion,
-        COUNT(hv.producto_id)   AS productos,
-        SUM(hv.total_venta)     AS total
-      FROM hechos_ventas hv
-      JOIN dim_tiempo  dt ON hv.tiempo_id  = dt.tiempo_id
-      JOIN dim_cliente dc ON hv.cliente_id = dc.cliente_id
-      GROUP BY hv.ticket_id, dt.fecha, dc.cliente_nombre, dc.cliente_localizacion
-      ORDER BY hv.ticket_id DESC
-      LIMIT 50
-    `);
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// Devuelve tickets desde caché en memoria (muy rápido)
+app.get('/api/historial', (req, res) => {
+  res.json(TICKETS_CACHE);
 });
 
 // ── 5. ELIMINAR TICKET ────────────────────────────────────────────────────────
@@ -207,9 +218,79 @@ app.get('/api/kpis-sesion', async (req, res) => {
   }
 });
 
+
+// ── GESTIÓN DE CLIENTES ───────────────────────────────────────────────────────
+
+// Agregar nuevo cliente
+app.post('/api/clientes', async (req, res) => {
+  const { cliente_nombre, cliente_edad, cliente_genero, cliente_localizacion } = req.body;
+  if (!cliente_nombre || !cliente_localizacion)
+    return res.status(400).json({ error: 'Nombre y localización son obligatorios' });
+  try {
+    const [maxId] = await pool.query('SELECT MAX(cliente_id) AS max_id FROM dim_cliente');
+    const nuevoId = (Number(maxId[0].max_id) || 0) + 1;
+    await pool.query(
+      'INSERT INTO dim_cliente (cliente_id, cliente_nombre, cliente_edad, cliente_genero, cliente_localizacion) VALUES (?, ?, ?, ?, ?)',
+      [nuevoId, cliente_nombre, cliente_edad || 0, cliente_genero || 'M', cliente_localizacion]
+    );
+    // Recargar catálogo en memoria
+    const [rows] = await pool.query('SELECT cliente_id, cliente_nombre, cliente_edad, cliente_genero, cliente_localizacion FROM dim_cliente ORDER BY cliente_nombre');
+    CLIENTES = rows;
+    res.json({ ok: true, cliente_id: nuevoId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Eliminar cliente
+app.delete('/api/clientes/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    await pool.query('DELETE FROM dim_cliente WHERE cliente_id = ?', [id]);
+    CLIENTES = CLIENTES.filter(c => c.cliente_id !== id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GESTIÓN DE PRODUCTOS ──────────────────────────────────────────────────────
+
+// Agregar nuevo producto
+app.post('/api/productos', async (req, res) => {
+  const { producto_nombre, producto_categoria, producto_precio, producto_costo } = req.body;
+  if (!producto_nombre || !producto_categoria || !producto_precio || !producto_costo)
+    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+  try {
+    const [maxId] = await pool.query('SELECT MAX(producto_id) AS max_id FROM dim_producto');
+    const nuevoId = (Number(maxId[0].max_id) || 0) + 1;
+    await pool.query(
+      'INSERT INTO dim_producto (producto_id, producto_nombre, producto_categoria, producto_precio, producto_costo) VALUES (?, ?, ?, ?, ?)',
+      [nuevoId, producto_nombre, producto_categoria, Number(producto_precio), Number(producto_costo)]
+    );
+    const [rows] = await pool.query('SELECT producto_id, producto_nombre, producto_categoria, producto_precio, producto_costo FROM dim_producto ORDER BY producto_categoria, producto_nombre');
+    PRODUCTOS = rows;
+    res.json({ ok: true, producto_id: nuevoId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Eliminar producto
+app.delete('/api/productos/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    await pool.query('DELETE FROM dim_producto WHERE producto_id = ?', [id]);
+    PRODUCTOS = PRODUCTOS.filter(p => p.producto_id !== id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── INICIAR SERVIDOR ──────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3031;
-cargarCatalogos()
+Promise.all([cargarCatalogos(), cargarTicketsCache()])
   .then(() => {
     app.listen(PORT, () => {
       console.log(`POS corriendo en http://localhost:${PORT}`);

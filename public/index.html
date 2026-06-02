@@ -21,6 +21,11 @@
   </div>
 </header>
 
+<div class="tabs-nav">
+  <button class="tab-btn active" onclick="cambiarTab('ventas', this)">Punto de Venta</button>
+  <button class="tab-btn" onclick="cambiarTab('catalogos', this)">Catalogo</button>
+</div>
+
 <div class="wrapper">
   <div class="pos-grid">
 
@@ -83,6 +88,19 @@
     <div class="panel">
       <div class="panel-title">Ventas Registradas</div>
 
+      <div class="field-group">
+        <label class="field-label">Tienda</label>
+        <select id="filtro-ciudad" class="input-field" onchange="aplicarFiltros()">
+          <option value="">-- Todas las tiendas --</option>
+        </select>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+        <input type="text" id="buscar-ticket" class="input-buscar"
+               placeholder="Buscar por ticket..." oninput="aplicarFiltros()" style="flex: 1;"/>
+        <button class="btn-exportar" onclick="imprimirTickets()" style="padding: 9px 16px; white-space: nowrap;">🖨️ Imprimir</button>
+      </div>
+
       <div class="historial-stats">
         <div class="stat-item">
           <div class="stat-val" id="stat-tickets">0</div>
@@ -103,6 +121,89 @@
       </div>
 
 
+    </div>
+
+  </div>
+</div>
+
+<!-- VISTA CATALOGOS -->
+<div id="vista-catalogos" style="display:none">
+  <div class="catalogos-grid">
+
+    <!-- CLIENTES -->
+    <div class="panel">
+      <div class="panel-title">Clientes</div>
+
+      <div class="field-group">
+        <label class="field-label">Nombre completo</label>
+        <input type="text" id="cli-nombre" class="input-field" placeholder="Ej. Maria Lopez"/>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+        <div class="field-group">
+          <label class="field-label">Edad</label>
+          <input type="number" id="cli-edad" class="input-field" min="18" max="80" value="30"/>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Genero</label>
+          <select id="cli-genero" class="input-field">
+            <option value="M">M</option>
+            <option value="F">F</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Ciudad</label>
+        <select id="cli-ciudad" class="input-field">
+          <option value="">-- Seleccionar ciudad --</option>
+          <option value="Aguascalientes">Aguascalientes</option>
+          <option value="CDMX">CDMX</option>
+          <option value="Chihuahua">Chihuahua</option>
+          <option value="Guadalajara">Guadalajara</option>
+          <option value="León">León</option>
+          <option value="Monterrey">Monterrey</option>
+          <option value="Mérida">Mérida</option>
+          <option value="Puebla">Puebla</option>
+          <option value="Querétaro">Querétaro</option>
+          <option value="San Luis Potosí">San Luis Potosí</option>
+          <option value="Tijuana">Tijuana</option>
+          <option value="Toluca">Toluca</option>
+        </select>
+      </div>
+      <button class="btn-registrar" onclick="agregarCliente()">Agregar Cliente</button>
+
+      <div class="catalogo-lista" id="lista-clientes"></div>
+    </div>
+
+    <!-- PRODUCTOS -->
+    <div class="panel">
+      <div class="panel-title">Productos</div>
+
+      <div class="field-group">
+        <label class="field-label">Nombre del producto</label>
+        <input type="text" id="prod-nombre" class="input-field" placeholder="Ej. Teclado Gaming"/>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Categoria</label>
+        <select id="prod-categoria" class="input-field">
+          <option>Electronica</option>
+          <option>Mobiliario</option>
+          <option>Papeleria</option>
+          <option>Accesorios</option>
+        </select>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+        <div class="field-group">
+          <label class="field-label">Precio venta ($)</label>
+          <input type="number" id="prod-precio" class="input-field" min="1" placeholder="0.00"/>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Costo ($)</label>
+          <input type="number" id="prod-costo" class="input-field" min="1" placeholder="0.00"/>
+        </div>
+      </div>
+      <button class="btn-registrar" onclick="agregarProducto()">Agregar Producto</button>
+
+      <div class="catalogo-lista" id="lista-productos"></div>
     </div>
 
   </div>
